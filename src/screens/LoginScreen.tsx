@@ -13,7 +13,7 @@ export default function LoginScreen({ navigation }: any) {
     }
 
     // Atalho exclusivo para você (Dono) acessar o Admin direto
-    if (email.toLowerCase() === 'admin' && senha === 'brekaz123') {
+    if (email.toLowerCase() === 'brekaztecnologialtda' && senha === 'Brekaz2026#') {
       return navigation.replace('Admin');
     }
 

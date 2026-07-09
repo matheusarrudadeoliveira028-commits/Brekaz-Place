@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, FlatList, ActivityIndicator, Alert, TouchableOpacity, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, FlatList, ActivityIndicator, Alert, TouchableOpacity } from 'react-native';
 import { supabase } from '../../supabase';
-import * as FileSystem from 'expo-file-system';
-import * as LegacyFileSystem from 'expo-file-system/legacy';
+
+// IMPORTAÇÕES BLINDADAS CONTRA O EXPO 54
+import * as LegacyFileSystem from 'expo-file-system/legacy'; 
 import * as IntentLauncher from 'expo-intent-launcher';
+import * as Sharing from 'expo-sharing'; // <-- Nosso Plano B Nativo
 
 type AppData = {
   id: number;
@@ -38,19 +40,14 @@ export default function ClienteScreen({ navigation }: any) {
     carregarDadosIniciais();
   }, []);
 
-  // ==========================================
-  // BUSCA DE DADOS MÚLTIPLOS (Usuário e Apps)
-  // ==========================================
   async function carregarDadosIniciais() {
     setCarregando(true);
     
-    // 1. Descobre quem está logado
     const { data: userData } = await supabase.auth.getUser();
     const emailUsuario = userData.user?.email || '';
     setEmailLogado(emailUsuario);
 
     if (emailUsuario) {
-      // 2. Busca os dados de faturamento/avisos dessa empresa
       const { data: empData } = await supabase
         .from('empresas')
         .select('*')
@@ -59,7 +56,6 @@ export default function ClienteScreen({ navigation }: any) {
         
       if (empData) setDadosEmpresa(empData);
 
-      // 3. Busca apenas os Apps que são "Todas" ou específicos dessa empresa
       const { data: appsData, error } = await supabase
         .from('catalogo_apps')
         .select('*')
@@ -73,17 +69,19 @@ export default function ClienteScreen({ navigation }: any) {
   }
 
   // ==========================================
-  // LÓGICA DE DOWNLOAD
+  // LÓGICA DE DOWNLOAD 100% BLINDADA
   // ==========================================
   async function baixarEInstalar(app: AppData) {
     setStatusDownload(prev => ({ ...prev, [app.id]: 'Baixando' }));
     setProgressoDownload(prev => ({ ...prev, [app.id]: 0 }));
 
     try {
-      const localDoArquivo = FileSystem.documentDirectory + `${app.pacote}.apk`;
+      const localDoArquivo = LegacyFileSystem.documentDirectory + `${app.pacote}.apk`;
 
       const downloadResumable = LegacyFileSystem.createDownloadResumable(
-        app.url_download, localDoArquivo, {},
+        app.url_download, 
+        localDoArquivo, 
+        {},
         (progress) => {
           const porcentagem = progress.totalBytesWritten / progress.totalBytesExpectedToWrite;
           setProgressoDownload(prev => ({ ...prev, [app.id]: porcentagem }));
@@ -94,13 +92,28 @@ export default function ClienteScreen({ navigation }: any) {
 
       if (resultado) {
         setStatusDownload(prev => ({ ...prev, [app.id]: 'Instalando' }));
-        const contentUri = await FileSystem.getContentUriAsync(resultado.uri);
-        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-          data: contentUri, flags: 1, type: 'application/vnd.android.package-archive',
-        });
+        
+        try {
+          // PLANO A: Tenta a conversão clássica do Android
+          const contentUri = await LegacyFileSystem.getContentUriAsync(resultado.uri);
+          
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: contentUri, 
+            flags: 1, 
+            type: 'application/vnd.android.package-archive',
+          });
+          
+        } catch (expoError) {
+          // PLANO B: Se o Expo 54 bloquear a URI nativa, usamos o Compartilhamento Nativo!
+          await Sharing.shareAsync(resultado.uri, {
+            mimeType: 'application/vnd.android.package-archive',
+            dialogTitle: 'Instalar Atualização',
+          });
+        }
       }
     } catch (error) {
-      Alert.alert('Falha', `Não foi possível atualizar o ${app.nome}.`);
+      Alert.alert('Falha', `Não foi possível baixar o ${app.nome}. Verifique a internet.`);
+      console.log("Erro no download: ", error);
     } finally {
       setStatusDownload(prev => ({ ...prev, [app.id]: '' }));
     }
@@ -129,7 +142,6 @@ export default function ClienteScreen({ navigation }: any) {
       onRefresh={carregarDadosIniciais}
       ListHeaderComponent={() => (
         <View>
-          {/* CABEÇALHO COM LOGOUT */}
           <View style={styles.headerTopo}>
             <Text style={styles.textoContaLogada}>Empresa: {emailLogado}</Text>
             <TouchableOpacity onPress={fazerLogout}>
@@ -138,7 +150,6 @@ export default function ClienteScreen({ navigation }: any) {
           </View>
 
           <View style={{ padding: 20, paddingBottom: 0 }}>
-            {/* 📢 MURAL DE AVISOS */}
             {dadosEmpresa?.aviso_mural && (
               <View style={styles.cardAviso}>
                 <Text style={styles.tituloAviso}>📢 Mural de Avisos</Text>
@@ -146,9 +157,11 @@ export default function ClienteScreen({ navigation }: any) {
               </View>
             )}
 
-            {/* 💼 PAINEL DE ASSINATURA E CREDENCIAIS */}
-            <View style={styles.cardAssinatura}>
-              <Text style={styles.tituloSecaoApp}>Dados do seu Plano</Text>
+            {/* CARD DE ASSINATURA REFORMULADO (VISUAL PREMIUM E CLARO) */}
+            <View style={styles.cardAssinaturaPremium}>
+              <View style={styles.headerCardAssinatura}>
+                <Text style={styles.tituloSecaoApp}>💼 Dados do seu Plano</Text>
+              </View>
               
               <View style={styles.linhaInfoPlano}>
                 <View>
@@ -161,10 +174,12 @@ export default function ClienteScreen({ navigation }: any) {
                 </View>
               </View>
 
-              <View style={styles.linhaDivisoria} />
+              <View style={styles.linhaDivisoriaClara} />
 
-              <Text style={styles.labelPlano}>🔑 Credenciais Padrão do Sistema</Text>
-              <Text style={styles.valorSenha}>{dadosEmpresa?.senhas_sistema}</Text>
+              <Text style={styles.labelPlanoDestaque}>🔑 Credenciais Padrão do Sistema</Text>
+              <View style={styles.caixaSenha}>
+                <Text style={styles.valorSenhaClaro}>{dadosEmpresa?.senhas_sistema}</Text>
+              </View>
             </View>
 
             <Text style={[styles.tituloSecaoApp, { marginTop: 10, marginBottom: 15 }]}>
@@ -209,7 +224,7 @@ export default function ClienteScreen({ navigation }: any) {
               disabled={estaBaixando || estaInstalando}
             >
               <Text style={styles.textoBotao}>
-                {estaBaixando ? 'Aguarde...' : estaInstalando ? 'Instalando...' : 'Atualizar Sistema'}
+                {estaBaixando ? 'Aguarde...' : estaInstalando ? 'Instalando...' : 'Baixar e Instalar'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -219,33 +234,32 @@ export default function ClienteScreen({ navigation }: any) {
   );
 }
 
-// ESTILOS DEIXADOS COM CARA DE SISTEMA CARO
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f1f5f9' },
   containerCentralizado: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc' },
   textoCarregando: { marginTop: 10, color: '#64748b' },
-  
-  // Header Topo
   headerTopo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 20, paddingTop: 40, borderBottomWidth: 1, borderColor: '#e2e8f0' },
   textoContaLogada: { color: '#475569', fontSize: 13, fontWeight: '600' },
   textoLogout: { color: '#ef4444', fontWeight: 'bold', fontSize: 14 },
-
-  // Card Aviso
+  
   cardAviso: { backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', padding: 15, borderRadius: 12, marginBottom: 15 },
   tituloAviso: { color: '#d97706', fontWeight: 'bold', fontSize: 14, marginBottom: 5 },
   textoAviso: { color: '#92400e', fontSize: 14, lineHeight: 20 },
-
-  // Card Assinatura
-  cardAssinatura: { backgroundColor: '#1e293b', padding: 20, borderRadius: 16, marginBottom: 20, elevation: 4 },
+  
+  // NOVOS ESTILOS DO CARD DE ASSINATURA PREMIUM
+  cardAssinaturaPremium: { backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 20, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, borderWidth: 1, borderColor: '#e2e8f0', borderTopWidth: 5, borderTopColor: '#0052cc', overflow: 'hidden' },
+  headerCardAssinatura: { backgroundColor: '#f8fafc', padding: 15, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   tituloSecaoApp: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
-  linhaInfoPlano: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  labelPlano: { color: '#94a3b8', fontSize: 12, marginBottom: 2 },
-  valorPlanoDestaque: { color: '#10b981', fontSize: 16, fontWeight: 'bold' },
-  valorPlano: { color: '#f8fafc', fontSize: 16, fontWeight: 'bold' },
-  linhaDivisoria: { height: 1, backgroundColor: '#334155', marginVertical: 15 },
-  valorSenha: { color: '#f8fafc', fontSize: 14, marginTop: 5, backgroundColor: '#0f172a', padding: 10, borderRadius: 8, overflow: 'hidden' },
+  linhaInfoPlano: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 15 },
+  labelPlano: { color: '#64748b', fontSize: 12, marginBottom: 4, fontWeight: '600' },
+  valorPlanoDestaque: { color: '#059669', fontSize: 17, fontWeight: '900' },
+  valorPlano: { color: '#1e293b', fontSize: 17, fontWeight: '800' },
+  linhaDivisoriaClara: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 15, marginHorizontal: 20 },
+  labelPlanoDestaque: { color: '#475569', fontSize: 13, fontWeight: 'bold', paddingHorizontal: 20, marginBottom: 8 },
+  caixaSenha: { backgroundColor: '#f8fafc', marginHorizontal: 20, marginBottom: 20, padding: 15, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0' },
+  valorSenhaClaro: { color: '#334155', fontSize: 14, fontWeight: '500', lineHeight: 22 },
 
-  // Card App
+  // Estilos do Card de Apps
   cardApp: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 15, borderWidth: 1, borderColor: '#e2e8f0', elevation: 2 },
   cardAppHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   nomeApp: { fontSize: 18, fontWeight: '700', color: '#1e293b' },
@@ -254,8 +268,6 @@ const styles = StyleSheet.create({
   textoBadgeData: { color: '#475569', fontSize: 11, fontWeight: 'bold' },
   descricaoApp: { fontSize: 14, color: '#475569', marginBottom: 12, lineHeight: 20 },
   tamanhoText: { fontSize: 12, color: '#94a3b8', marginBottom: 16 },
-
-  // Botão e Progresso
   botaoAcao: { backgroundColor: '#0052cc', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   botaoDesabilitado: { backgroundColor: '#94a3b8' },
   textoBotao: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' },
